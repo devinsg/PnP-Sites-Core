@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using OfficeDevPnP.Core.Entities;
 using System.Linq;
 
+#if !NETSTANDARD2_0
 namespace OfficeDevPnP.Core.Tests.Authentication
 {
 #if !ONPREMISES
@@ -34,6 +35,11 @@ namespace OfficeDevPnP.Core.Tests.Authentication
         }
         #endregion
 
+        /// <summary>
+        /// Important: the Azure AD you're using here needs to be consented first, otherwise you'll get an access denied.
+        /// Consenting can be done by taking this URL and replacing the client_id parameter value with yours: https://login.microsoftonline.com/common/oauth2/authorize?state=e82ea723-7112-472c-94d4-6e66c0ca52b6&response_type=code+id_token&scope=openid&nonce=c328d2df-43d1-4e4d-a884-7cfb492beadc&client_id=b77caa50-d9ba-4b30-aad6-a40effa2ecd0&redirect_uri=https:%2f%2flocalhost:44304%2fHome%2f&resource=https:%2f%2fgraph.windows.net%2f&prompt=admin_consent&response_mode=form_post
+        /// To debug this catch the returned access token and look http://jwt.calebb.net/ to see if the token contains roles claims
+        /// </summary>
         [TestMethod]
         public void AzureADAuthFullControlPermissionTest()
         {
@@ -41,8 +47,14 @@ namespace OfficeDevPnP.Core.Tests.Authentication
             string spoUserName = AuthenticationTests.UserName;
             string azureADCertPfxPassword = TestCommon.AzureADCertPfxPassword;
             string azureADClientId = TestCommon.AzureADClientId;
+            string azureADCertificateFilePath = TestCommon.AzureADCertificateFilePath;
+            if (string.IsNullOrEmpty(azureADCertificateFilePath))
+            {
+                azureADCertificateFilePath = @"resources\PnPAzureAppTest.pfx";
+            }
 
-            if (String.IsNullOrEmpty(azureADCertPfxPassword) ||
+            if (String.IsNullOrEmpty(azureADCertificateFilePath) ||
+                String.IsNullOrEmpty(azureADCertPfxPassword) ||
                 String.IsNullOrEmpty(azureADClientId) ||
                 String.IsNullOrEmpty(spoUserName) ||
                 String.IsNullOrEmpty(siteUrl))
@@ -59,11 +71,11 @@ namespace OfficeDevPnP.Core.Tests.Authentication
                 // Instantiate a ClientContext object based on the defined Azure AD application
                 if (new Uri(siteUrl).DnsSafeHost.Contains("spoppe.com"))
                 {
-                    cc = new AuthenticationManager().GetAzureADAppOnlyAuthenticatedContext(siteUrl, azureADClientId, domain, @"resources\PnPAzureAppTest.pfx", azureADCertPfxPassword, AzureEnvironment.PPE);
+                    cc = new AuthenticationManager().GetAzureADAppOnlyAuthenticatedContext(siteUrl, azureADClientId, domain, azureADCertificateFilePath, azureADCertPfxPassword, AzureEnvironment.PPE);
                 }
                 else
                 {
-                    cc = new AuthenticationManager().GetAzureADAppOnlyAuthenticatedContext(siteUrl, azureADClientId, domain, @"resources\PnPAzureAppTest.pfx", azureADCertPfxPassword);
+                    cc = new AuthenticationManager().GetAzureADAppOnlyAuthenticatedContext(siteUrl, azureADClientId, domain, azureADCertificateFilePath, azureADCertPfxPassword);
                 }
 
                 // Check if we can read a property from the site
@@ -86,7 +98,7 @@ namespace OfficeDevPnP.Core.Tests.Authentication
             }
         }
 
-        #region Helper methods
+#region Helper methods
         private static void DeleteListsImplementation(ClientContext cc)
         {
             cc.Load(cc.Web.Lists, f => f.Include(t => t.Title));
@@ -101,7 +113,8 @@ namespace OfficeDevPnP.Core.Tests.Authentication
             }
             cc.ExecuteQueryRetry();
         }
-        #endregion
+#endregion
     }
 #endif
 }
+#endif

@@ -7,18 +7,18 @@
   <xsl:param name="now" />
   
 <xsl:template match="/">
-#PnP Provisioning Schema
+# PnP Provisioning Schema
 ----------
-*Topic automatically generated on <xsl:value-of select="$now" />*
+* Topic automatically generated on <xsl:value-of select="$now" />*
 
-##Namespace
+## Namespace
 The namespace of the PnP Provisioning Schema is:
 
 <xsl:value-of select="/xsd:schema/@targetNamespace" />
 
 All the elements have to be declared with that namespace reference.
 
-##Root Elements
+## Root Elements
 Here follows the list of root elements available in the PnP Provisioning Schema.
   
 <xsl:for-each select="xsd:schema/xsd:element">
@@ -34,7 +34,7 @@ Here follows the list of root elements available in the PnP Provisioning Schema.
   
 </xsl:for-each>
 
-##Child Elements and Complex Types
+## Child Elements and Complex Types
 Here follows the list of all the other child elements and complex types that can be used in the PnP Provisioning Schema.
 <xsl:for-each select="/xsd:schema/xsd:complexType/child::*/xsd:element[not(@type)]/xsd:complexType | /xsd:schema/xsd:complexType[@name != 'Provisioning' and @name != 'ProvisioningTemplate']">
 <xsl:call-template name="RenderComplexType">
@@ -67,7 +67,7 @@ Here follows the list of all the other child elements and complex types that can
 
 <!-- Create an anchor to the current complexType -->
 <xsl:call-template name="LinkXmlTag"><xsl:with-param name="tagName" select="$typeName" /></xsl:call-template>
-###<xsl:value-of select="$typeName"/><xsl:call-template name="CRLF" />
+### <xsl:value-of select="$typeName"/><xsl:call-template name="CRLF" />
 
 <!-- Write the complexType description -->
 <xsl:variable name="documentation">
@@ -153,8 +153,8 @@ Element|Type|Description
 <xsl:if test="$currentTypeAttributes">
 Here follow the available attributes for the <xsl:value-of select="@name"/> element.<xsl:call-template name="CRLF" />
 
-Attibute|Type|Description
---------|----|-----------
+Attibute|Type|Description|Required|Default
+--------|----|-----------|--------|-------
 <xsl:for-each select="$currentTypeAttributes">
 
 <!-- Determine the attribute type -->  
@@ -169,9 +169,7 @@ Attibute|Type|Description
 </xsl:choose>
 </xsl:variable>
   
-<xsl:value-of select="./@name"/>|<xsl:value-of select="$attibuteType"/>|<xsl:if test="./xsd:annotation/xsd:documentation != ''">
-<xsl:value-of select="normalize-space(./xsd:annotation/xsd:documentation)" />
-</xsl:if><xsl:call-template name="CRLF" />
+<xsl:value-of select="./@name"/>|<xsl:value-of select="$attibuteType"/>|<xsl:if test="./xsd:annotation/xsd:documentation != ''"><xsl:value-of select="normalize-space(./xsd:annotation/xsd:documentation)" /></xsl:if>|<xsl:choose><xsl:when test="./@use != 'required'">No</xsl:when><xsl:otherwise>Yes</xsl:otherwise></xsl:choose>|<xsl:if test="./@default != ''"><xsl:value-of select="./@default" /></xsl:if><xsl:call-template name="CRLF" />
 </xsl:for-each>
 </xsl:if>
 

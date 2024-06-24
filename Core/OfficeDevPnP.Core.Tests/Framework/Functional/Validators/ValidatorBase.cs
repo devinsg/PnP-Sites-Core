@@ -235,7 +235,7 @@ namespace OfficeDevPnP.Core.Tests.Framework.Functional.Validators
             return sourceCount == targetCount;
         }
 
-        public virtual bool ValidateObjectXML(string source, string target, List<string> properties, TokenParser tokenParser = null, Dictionary<string, string[]> parsedProperties = null) 
+        public virtual bool ValidateObjectXML(string source, string target, List<string> properties, TokenParser tokenParser = null, Dictionary<string, string[]> parsedProperties = null)
         {
             XElement sourceXml = XElement.Parse(source);
             XElement targetXml = XElement.Parse(target);
@@ -363,9 +363,16 @@ namespace OfficeDevPnP.Core.Tests.Framework.Functional.Validators
             {
                 foreach (Microsoft.SharePoint.Client.RoleAssignment r in roles)
                 {
-                    if (r.Member.LoginName.Contains(s.Principal) && r.RoleDefinitionBindings.Where(i => i.Name == s.RoleDefinition).FirstOrDefault() != null)
+                    if (r.Member.LoginName.Contains(s.Principal))
                     {
-                        roleCount++;
+                        if (r.Member.LoginName.Equals("c:0(.s|true", StringComparison.InvariantCultureIgnoreCase))
+                        {
+                            roleCount++;
+                        }
+                        else if (r.RoleDefinitionBindings.Where(i => i.Name == s.RoleDefinition).FirstOrDefault() != null)
+                        {
+                            roleCount++;
+                        }
                     }
                 }
             }
@@ -386,6 +393,24 @@ namespace OfficeDevPnP.Core.Tests.Framework.Functional.Validators
             // Validate item values
             foreach(var dataValue in dataRow.Values)
             {
+                if (item[dataValue.Key] is FieldLookupValue lookupValue)
+                {
+                    if (!lookupValue.LookupId.ToString().Equals(dataValue.Value, StringComparison.InvariantCultureIgnoreCase))
+                    {
+                        return false;
+                    }
+                    continue;
+                }
+                if (item[dataValue.Key] is FieldLookupValue[] lookupValues)
+                {
+                    var dataValues = dataValue.Value.Split(',', ';').OrderBy(v => v, StringComparer.InvariantCultureIgnoreCase);
+                    var itemValues = lookupValues.Select(v => v.LookupId.ToString()).OrderBy(v => v, StringComparer.InvariantCultureIgnoreCase);
+                    if (!itemValues.SequenceEqual(dataValues, StringComparer.InvariantCultureIgnoreCase))
+                    {
+                        return false;
+                    }
+                    continue;
+                }
                 if (!item[dataValue.Key].ToString().Equals(dataValue.Value, StringComparison.InvariantCultureIgnoreCase))
                 {
                     return false;
@@ -483,7 +508,5 @@ namespace OfficeDevPnP.Core.Tests.Framework.Functional.Validators
         }
 
         #endregion
-
-
     }
 }

@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Microsoft.SharePoint.Client;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
@@ -8,8 +9,16 @@ using System.Threading.Tasks;
 
 namespace System
 {
+    /// <summary>
+    /// Extension methods to get complete exception details and to deal with exceptions easily.
+    /// </summary>
     public static class ExceptionExtensions
     {
+        /// <summary>
+        /// Returns the detailed exception
+        /// </summary>
+        /// <param name="exception">Exception object</param>
+        /// <returns>Returns exception as a string</returns>
         public static string ToDetailedString(this Exception exception)
         {
             if (exception == null)
@@ -20,11 +29,60 @@ namespace System
             return ToDetailedString(exception, ExceptionOptions.Default);
         }
 
+        /// <summary>
+        /// Returns exception for the given ClientRunTimeContext
+        /// </summary>
+        /// <param name="exception">Exception object</param>
+        /// <param name="cc">ClientRuntimeContext object</param>
+        /// <returns>Returns exception as a string</returns>
+        public static string ToDetailedString(this Exception exception, ClientRuntimeContext cc)
+        {
+            if (exception == null)
+            {
+                throw new ArgumentNullException(nameof(exception));
+            }
+
+            return ToDetailedString(exception, cc, ExceptionOptions.Default);
+        }
+
+        /// <summary>
+        /// Returns Exception based on ExceptionOptions object
+        /// </summary>
+        /// <param name="exception">Exception object</param>
+        /// <param name="options">ExceptionOptions object</param>
+        /// <returns>Returns exception as a string</returns>
         public static string ToDetailedString(this Exception exception, ExceptionOptions options)
         {
+            if (exception == null)
+            {
+                throw new ArgumentNullException(nameof(exception));
+            }
+
+            return ToDetailedString(exception, null, ExceptionOptions.Default);
+        }
+
+        /// <summary>
+        /// Returns exception based on ClientRunTimeContext and ExceptionOptions objects
+        /// </summary>
+        /// <param name="exception">Exception object</param>
+        /// <param name="cc">ClientRuntimeContext object</param>
+        /// <param name="options">ExceptionOptions object</param>
+        /// <returns>Returns exception as a string</returns>
+        public static string ToDetailedString(this Exception exception, ClientRuntimeContext cc, ExceptionOptions options)
+        {
+            if (exception == null)
+            {
+                throw new ArgumentNullException(nameof(exception));
+            }
+
             var stringBuilder = new StringBuilder();
 
             AppendValue(stringBuilder, "Type", exception.GetType().FullName, options);
+
+            if (cc != null && !String.IsNullOrEmpty(cc.TraceCorrelationId))
+            {
+                AppendValue(stringBuilder, "TraceCorrelationId", cc.TraceCorrelationId, options);
+            }
 
             foreach (PropertyInfo property in exception
                 .GetType()
@@ -148,6 +206,9 @@ namespace System
         }
     }
 
+    /// <summary>
+    /// Holds options for Exception
+    /// </summary>
     public struct ExceptionOptions
     {
         public static readonly ExceptionOptions Default = new ExceptionOptions()
@@ -168,8 +229,13 @@ namespace System
 
         internal int CurrentIndentLevel { get; set; }
 
+        /// <summary>
+        /// Gets or sets the integer value for space indentation
+        /// </summary>
         public int IndentSpaces { get; set; }
-
+        /// <summary>
+        /// Gets or sets the OmitNullProperties flag
+        /// </summary>
         public bool OmitNullProperties { get; set; }
     }
 }

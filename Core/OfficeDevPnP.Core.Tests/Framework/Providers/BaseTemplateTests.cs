@@ -1,4 +1,6 @@
-﻿using Microsoft.Online.SharePoint.TenantAdministration;
+﻿#if !NETSTANDARD2_0
+
+using Microsoft.Online.SharePoint.TenantAdministration;
 using Microsoft.SharePoint.Client;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using OfficeDevPnP.Core.Entities;
@@ -24,19 +26,73 @@ namespace OfficeDevPnP.Core.Tests.Framework.Providers
     {
         protected class BaseTemplate
         {
-            public BaseTemplate(string template, string subSiteTemplate = "", string saveAsTemplate = "", bool isGroup = false)
+            public BaseTemplate(string template, string subSiteTemplate = "", string saveAsTemplate = "", bool skipDeleteCreateCycle = false)
             {
                 Template = template;
                 SubSiteTemplate = subSiteTemplate;
                 SaveAsTemplate = saveAsTemplate;
-                IsGroup = isGroup;
+                SkipDeleteCreateCycle = skipDeleteCreateCycle;
             }
 
             public string Template { get; set; }
             public string SubSiteTemplate { get; set; }
             public string SaveAsTemplate { get; set; }
-            public bool IsGroup { get; set; }
+            public bool SkipDeleteCreateCycle { get; set; }
         }
+
+        [TestMethod]
+        [Ignore]
+        public void ExtractMinimalTemplateSetForRelease()
+        {
+            bool deleteSites = true;
+            bool createSites = true;
+
+            List<BaseTemplate> templates = new List<BaseTemplate>(1);
+            templates.Add(new BaseTemplate("STS#0"));
+#if !SP2013 && !SP2016
+            templates.Add(new BaseTemplate("STS#3"));
+#endif
+#if !ONPREMISES
+            templates.Add(new BaseTemplate("SITEPAGEPUBLISHING#0"));
+            templates.Add(new BaseTemplate("GROUP#0", skipDeleteCreateCycle: true));
+#endif
+            ProcessBaseTemplates(templates, deleteSites, createSites);
+        }
+
+        [TestMethod]
+        [Ignore]
+        public void ExtractOtherTemplatesForRelease()
+        {
+            // IMPORTANT: extraction needs to be done with user credentials, not app-only. With app-only certain templates (like BDR) will fail
+            // use these flags to save time if the process failed after delete or create sites was done
+            bool deleteSites = false;
+            bool createSites = false;
+
+            List<BaseTemplate> templates = new List<BaseTemplate>(15);
+            templates.Add(new BaseTemplate("BLOG#0"));
+            templates.Add(new BaseTemplate("BDR#0"));
+            templates.Add(new BaseTemplate("DEV#0"));
+            templates.Add(new BaseTemplate("OFFILE#1"));
+#if !ONPREMISES
+            templates.Add(new BaseTemplate("EHS#1"));
+            templates.Add(new BaseTemplate("BLANKINTERNETCONTAINER#0", "", "BLANKINTERNET#0"));
+#else
+            templates.Add(new BaseTemplate("STS#1"));
+            templates.Add(new BaseTemplate("BLANKINTERNET#0"));
+#endif
+            templates.Add(new BaseTemplate("BICENTERSITE#0"));
+            templates.Add(new BaseTemplate("SRCHCEN#0"));
+            templates.Add(new BaseTemplate("BLANKINTERNETCONTAINER#0", "CMSPUBLISHING#0", "CMSPUBLISHING#0"));
+            templates.Add(new BaseTemplate("ENTERWIKI#0"));
+            templates.Add(new BaseTemplate("PROJECTSITE#0"));
+            templates.Add(new BaseTemplate("COMMUNITY#0"));
+            templates.Add(new BaseTemplate("COMMUNITYPORTAL#0"));
+            templates.Add(new BaseTemplate("SRCHCENTERLITE#0"));
+            templates.Add(new BaseTemplate("VISPRUS#0"));
+
+            ProcessBaseTemplates(templates, deleteSites, createSites);
+        }
+
 
         [TestMethod]
         [Ignore]
@@ -46,7 +102,7 @@ namespace OfficeDevPnP.Core.Tests.Framework.Providers
             bool createSites = true;
 
             List<BaseTemplate> templates = new List<BaseTemplate>(1);
-            templates.Add(new BaseTemplate("STS#0"));
+            templates.Add(new BaseTemplate("SITEPAGEPUBLISHING#0", skipDeleteCreateCycle: false));
 
             ProcessBaseTemplates(templates, deleteSites, createSites);
         }
@@ -55,6 +111,7 @@ namespace OfficeDevPnP.Core.Tests.Framework.Providers
         [Ignore]
         public void ExtractBaseTemplates2()
         {
+            // IMPORTANT: extraction needs to be done with user credentials, not app-only. With app-only certain templates (like BDR) will fail
             // use these flags to save time if the process failed after delete or create sites was done
             bool deleteSites = true;
             bool createSites = true;
@@ -66,12 +123,16 @@ namespace OfficeDevPnP.Core.Tests.Framework.Providers
             templates.Add(new BaseTemplate("DEV#0"));
             templates.Add(new BaseTemplate("OFFILE#1"));
 #if !ONPREMISES
-            templates.Add(new BaseTemplate("GROUP#0", isGroup: true));
+            templates.Add(new BaseTemplate("GROUP#0", skipDeleteCreateCycle: true));
+            templates.Add(new BaseTemplate("SITEPAGEPUBLISHING#0"));
             templates.Add(new BaseTemplate("EHS#1"));
             templates.Add(new BaseTemplate("BLANKINTERNETCONTAINER#0", "", "BLANKINTERNET#0"));
 #else
             templates.Add(new BaseTemplate("STS#1"));
             templates.Add(new BaseTemplate("BLANKINTERNET#0"));
+#endif
+#if !SP2013 && !SP2016
+            templates.Add(new BaseTemplate("STS#3"));
 #endif
             templates.Add(new BaseTemplate("BICENTERSITE#0"));
             templates.Add(new BaseTemplate("SRCHCEN#0"));
@@ -96,7 +157,7 @@ namespace OfficeDevPnP.Core.Tests.Framework.Providers
             bool createSites = true;
 
             List<BaseTemplate> templates = new List<BaseTemplate>(1);
-            templates.Add(new BaseTemplate("GROUP#0", isGroup: true));
+            templates.Add(new BaseTemplate("GROUP#0", skipDeleteCreateCycle: true));
 
             ProcessBaseTemplates(templates, deleteSites, createSites);
         }
@@ -105,10 +166,10 @@ namespace OfficeDevPnP.Core.Tests.Framework.Providers
         {
             using (var tenantCtx = TestCommon.CreateTenantClientContext())
             {
-                tenantCtx.RequestTimeout = Timeout.Infinite;
+                tenantCtx.RequestTimeout = 1000 * 60 * 15;
                 Tenant tenant = new Tenant(tenantCtx);
 
-#if !ONPREMISES
+#if !SP2013 && !SP2016
                 if (deleteSites)
                 {
                     // First delete all template site collections when in SPO
@@ -119,13 +180,17 @@ namespace OfficeDevPnP.Core.Tests.Framework.Providers
                         try
                         {
                             Console.WriteLine("Deleting existing site {0}", siteUrl);
-                            if (template.IsGroup)
+                            if (template.SkipDeleteCreateCycle)
                             {
                                 // Do nothing for the time being since we don't allow group deletion using app-only context
                             }
                             else
                             {
+#if !ONPREMISES
                                 tenant.DeleteSiteCollection(siteUrl, false);
+#else
+                                tenant.DeleteSiteCollection(siteUrl);
+#endif
                             }
                         }
                         catch{ }
@@ -141,7 +206,7 @@ namespace OfficeDevPnP.Core.Tests.Framework.Providers
 
                         Console.WriteLine("Creating site {0}", siteUrl);
 
-                        if (template.IsGroup)
+                        if (template.SkipDeleteCreateCycle)
                         {
                             // Do nothing for the time being since we don't allow group creation using app-only context
                         }
@@ -155,15 +220,46 @@ namespace OfficeDevPnP.Core.Tests.Framework.Providers
 
                             if (!siteExists)
                             {
-                                tenant.CreateSiteCollection(new Entities.SiteEntity()
+                                if (template.Template.StartsWith("SITEPAGEPUBLISHING"))
                                 {
-                                    Lcid = 1033,
-                                    TimeZoneId = 4,
-                                    SiteOwnerLogin = (TestCommon.Credentials as SharePointOnlineCredentials).UserName,
-                                    Title = "Template Site",
-                                    Template = template.Template,
-                                    Url = siteUrl,
-                                }, true, true);
+                                    using (var clientContext = TestCommon.CreateClientContext())
+                                    {
+                                        var newCommunicationSiteCreationInfo = new Core.Sites.CommunicationSiteCollectionCreationInformation()
+                                        {
+                                            Url = siteUrl,
+                                            SiteDesign = Core.Sites.CommunicationSiteDesign.Blank,
+                                            Title = "Template Site",
+                                            Lcid = 1033
+                                        };
+
+                                        clientContext.CreateSiteAsync(newCommunicationSiteCreationInfo).Wait();
+                                    }
+                                }
+                                else
+                                {
+
+                                    var newSiteEntity = new Entities.SiteEntity()
+                                    {
+                                        Lcid = 1033,
+                                        TimeZoneId = 4,
+#if !ONPREMISES
+                                        SiteOwnerLogin = (TestCommon.Credentials as SharePointOnlineCredentials).UserName,
+#else
+                                        SiteOwnerLogin = string.Format("{0}\\{1}",
+                                            (TestCommon.Credentials as System.Net.NetworkCredential).Domain,
+                                            (TestCommon.Credentials as System.Net.NetworkCredential).UserName),
+#endif
+                                        Title = "Template Site",
+                                        Template = template.Template,
+                                        Url = siteUrl,
+                                    };
+
+#if !ONPREMISES
+                                    tenant.CreateSiteCollection(newSiteEntity, true, true);
+#else
+                                    tenant.CreateSiteCollection(newSiteEntity);
+#endif
+                                }
                             }
 
                             if (template.SubSiteTemplate.Length > 0)
@@ -199,7 +295,7 @@ namespace OfficeDevPnP.Core.Tests.Framework.Providers
                     // Export the base templates
                     using (ClientContext cc = ctx.Clone(siteUrl))
                     {
-                        cc.RequestTimeout = Timeout.Infinite;
+                        cc.RequestTimeout = 1000 * 60 * 15;
 
                         // Specify null as base template since we do want "everything" in this case
                         ProvisioningTemplateCreationInformation creationInfo = new ProvisioningTemplateCreationInformation(cc.Web);
@@ -245,7 +341,7 @@ namespace OfficeDevPnP.Core.Tests.Framework.Providers
 
         private static string GetSiteUrl(BaseTemplate template, bool siteCollectionUrl = true)
         {
-            Uri devSiteUrl = new Uri(ConfigurationManager.AppSettings["SPODevSiteUrl"]);
+            Uri devSiteUrl = new Uri(TestCommon.AppSetting("SPODevSiteUrl"));
             string baseUrl = String.Format("{0}://{1}", devSiteUrl.Scheme, devSiteUrl.DnsSafeHost);
 
             string siteUrl = "";
@@ -316,7 +412,7 @@ namespace OfficeDevPnP.Core.Tests.Framework.Providers
         private void DumpTemplate(ClientContext ctx, string template, string subSiteTemplate = "", string saveAsTemplate = "")
         {
 
-            Uri devSiteUrl = new Uri(ConfigurationManager.AppSettings["SPODevSiteUrl"]);
+            Uri devSiteUrl = new Uri(TestCommon.AppSetting("SPODevSiteUrl"));
             string baseUrl = String.Format("{0}://{1}", devSiteUrl.Scheme, devSiteUrl.DnsSafeHost);
 
             string siteUrl = "";
@@ -441,3 +537,4 @@ namespace OfficeDevPnP.Core.Tests.Framework.Providers
 
     }
 }
+#endif

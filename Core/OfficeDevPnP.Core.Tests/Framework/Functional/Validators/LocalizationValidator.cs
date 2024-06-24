@@ -13,7 +13,7 @@ namespace OfficeDevPnP.Core.Tests.Framework.Functional.Validators
 #if !SP2013
     class LocalizationValidator : ValidatorBase
     {
-        private readonly bool isNoScriptSite = false;
+        private bool isNoScriptSite = false;
 
         #region construction
         public LocalizationValidator(Web web) : base()
@@ -61,7 +61,7 @@ namespace OfficeDevPnP.Core.Tests.Framework.Functional.Validators
             #endregion
 
             #region WebParts
-            if (CanUseAcceptLanguageHeaderForLocalization(web))
+            if (!isNoScriptSite && CanUseAcceptLanguageHeaderForLocalization(web))
             {
                 isValid = ValidateWebPartOnPages(ptSource, sParser);
                 if (!isValid) { return false; }
@@ -69,14 +69,14 @@ namespace OfficeDevPnP.Core.Tests.Framework.Functional.Validators
             #endregion
 
             #region Navigation
-            if (CanUseAcceptLanguageHeaderForLocalization(web))
+            if (!isNoScriptSite && CanUseAcceptLanguageHeaderForLocalization(web))
             {
                 isValid = ValidateStructuralNavigation(ptSource, sParser);
                 if (!isValid) return false;
             }
             #endregion
 
-#if !ONPREMISES
+#if !SP2013 && !SP2016
             #region Custom Action
             if (!isNoScriptSite)
             {
@@ -95,6 +95,13 @@ namespace OfficeDevPnP.Core.Tests.Framework.Functional.Validators
             {
                 return true;
             }
+
+#if SP2019
+            if (web.Context.IsAppOnlyWithDelegation())
+            {
+                return true;
+            }
+#endif
 
             var currentUser = web.EnsureProperty(w => w.CurrentUser);
             PeopleManager peopleManager = new PeopleManager(web.Context);
@@ -329,10 +336,13 @@ namespace OfficeDevPnP.Core.Tests.Framework.Functional.Validators
                     cc.PendingRequest.RequestExecutor.WebRequest.Headers["Accept-Language"] = resourceValue.Item1;
                     cc.Load(web, w => w.Navigation, w => w.Navigation.TopNavigationBar);
                     cc.ExecuteQueryRetry();
-                    var firstNode = web.Navigation.TopNavigationBar.First();
-                    if (!firstNode.Title.Equals(resourceValue.Item2))
+                    if (!cc.Web.IsSubSite())
                     {
-                        ok = false;
+                        var firstNode = web.Navigation.TopNavigationBar.First();
+                        if (!firstNode.Title.Equals(resourceValue.Item2))
+                        {
+                            ok = false;
+                        }
                     }
                 }
             }

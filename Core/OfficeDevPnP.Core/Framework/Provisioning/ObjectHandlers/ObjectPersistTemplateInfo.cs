@@ -13,6 +13,8 @@ namespace OfficeDevPnP.Core.Framework.Provisioning.ObjectHandlers
             get { return "Persist Template Info"; }
         }
 
+        public override string InternalName => "PersistTemplateInfo";
+
         public ObjectPersistTemplateInfo()
         {
             this.ReportProgress = false;
@@ -52,7 +54,7 @@ namespace OfficeDevPnP.Core.Framework.Provisioning.ObjectHandlers
             return template;
         }
 
-        public override bool WillProvision(Web web, ProvisioningTemplate template)
+        public override bool WillProvision(Web web, ProvisioningTemplate template, ProvisioningTemplateApplyingInformation applyingInformation)
         {
             if (!_willProvision.HasValue)
             {

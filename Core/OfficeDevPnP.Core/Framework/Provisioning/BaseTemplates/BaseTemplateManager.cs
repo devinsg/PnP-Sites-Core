@@ -7,6 +7,7 @@ using OfficeDevPnP.Core.Framework.Provisioning.Providers.Xml;
 using OfficeDevPnP.Core.Utilities;
 using OfficeDevPnP.Core.Framework.Provisioning.Providers;
 using System.Linq;
+using System.Diagnostics;
 
 namespace Microsoft.SharePoint.Client
 {
@@ -15,6 +16,11 @@ namespace Microsoft.SharePoint.Client
     /// </summary>
     public static class BaseTemplateManager
     {
+        /// <summary>
+        /// Gets the base template.
+        /// </summary>
+        /// <param name="web">the target web to get template</param>
+        /// <returns>Returns a ProvisioningTemplate object</returns>
         public static ProvisioningTemplate GetBaseTemplate(this Web web)
         {
             web.Context.Load(web, p => p.WebTemplate, p => p.Configuration);
@@ -30,6 +36,13 @@ namespace Microsoft.SharePoint.Client
             //}
         }
 
+        /// <summary>
+        /// Gets the provisioning template of provided webtemplate and configuration.
+        /// </summary>
+        /// <param name="web">the target web</param>
+        /// <param name="webTemplate">the name of the webtemplate</param>
+        /// <param name="configuration">configuration of template</param>
+        /// <returns>Returns a ProvisioningTemplate object</returns>
         public static ProvisioningTemplate GetBaseTemplate(this Web web, string webTemplate, short configuration)
         {
 
@@ -37,7 +50,7 @@ namespace Microsoft.SharePoint.Client
 
             try
             {
-                string baseTemplate = $"OfficeDevPnP.Core.Framework.Provisioning.BaseTemplates.v{GetSharePointVersion()}.{webTemplate}{configuration}Template.xml";
+                string baseTemplate = $"OfficeDevPnP.Core.Framework.Provisioning.BaseTemplates.{GetSharePointVersion()}.{webTemplate}{configuration}Template.xml";
                 using (Stream stream = typeof(BaseTemplateManager).Assembly.GetManifestResourceStream(baseTemplate))
                 {
                     // Figure out the formatter to use
@@ -71,7 +84,53 @@ namespace Microsoft.SharePoint.Client
         {
             Assembly asm = Assembly.GetAssembly(typeof(Site));
             AssemblyName name = asm.GetName();
-            return $"{name.Version.Major}_{name.Version.Minor}";
+
+            try
+            {
+                FileVersionInfo fvi = FileVersionInfo.GetVersionInfo(asm.Location);
+                string version = fvi.FileVersion;
+
+                if (Version.TryParse(version, out Version v))
+                {
+                    if (v.Major == 14)
+                    {
+                        return "_2010";
+                    }
+                    else if (v.Major == 15)
+                    {
+                        return "_2013";
+
+                    }
+                    else if (v.Major == 16)
+                    {
+                        if (v.Build < 6000)
+                        {
+                            //if(v.MinorRevision < 4690)
+                            //{
+                            //    // Pre May 2018 CU
+                            //    CacheManager.Instance.SharepointVersions.TryAdd(urlUri, SPVersion.SP2016Legacy);
+                            //    return SPVersion.SP2016Legacy;
+                            //}
+
+                            return "_2016";
+                        }
+                        else if (v.Build > 10300 && v.Build < 19000)
+                        {
+                            
+                            return "_2019";
+                        }
+                        else
+                        {
+                            return "SPO";
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // catch errors here...if it goes wrong we'll fall back to the default logic, 2019 will return as 2016 at that point.
+            }
+            return "SPO";
         }
 
     }

@@ -16,7 +16,7 @@ using Microsoft.SharePoint.Client;
 namespace OfficeDevPnP.Core.Framework.Provisioning.Providers.Xml
 {
     internal class XMLPnPSchemaV201512Formatter :
-        IXMLSchemaFormatter, ITemplateFormatter
+        IXMLSchemaFormatter, ITemplateFormatterWithValidation
     {
         private TemplateProviderBase _provider;
 
@@ -27,7 +27,11 @@ namespace OfficeDevPnP.Core.Framework.Provisioning.Providers.Xml
 
         string IXMLSchemaFormatter.NamespaceUri
         {
-            get { return (XMLConstants.PROVISIONING_SCHEMA_NAMESPACE_2015_12); }
+            get { return (
+#pragma warning disable 0618
+                    XMLConstants.PROVISIONING_SCHEMA_NAMESPACE_2015_12
+#pragma warning restore 0618
+                    ); }
         }
 
         string IXMLSchemaFormatter.NamespacePrefix
@@ -37,6 +41,13 @@ namespace OfficeDevPnP.Core.Framework.Provisioning.Providers.Xml
 
         public bool IsValid(Stream template)
         {
+            return GetValidationResults(template).IsValid;
+        }
+
+        public ValidationResult GetValidationResults(Stream template)
+        {
+            var exceptions = new List<Exception>();
+
             if (template == null)
             {
                 throw new ArgumentNullException(nameof(template));
@@ -52,17 +63,22 @@ namespace OfficeDevPnP.Core.Framework.Provisioning.Providers.Xml
 
             // Prepare the XML Schema Set
             XmlSchemaSet schemas = new XmlSchemaSet();
-            schemas.Add(XMLConstants.PROVISIONING_SCHEMA_NAMESPACE_2015_12,
+            schemas.Add(
+#pragma warning disable 0618
+                XMLConstants.PROVISIONING_SCHEMA_NAMESPACE_2015_12
+#pragma warning restore 0618
+                ,
                 new XmlTextReader(stream));
 
             Boolean result = true;
             xml.Validate(schemas, (o, e) =>
             {
+                exceptions.Add(e.Exception);
                 Diagnostics.Log.Error(e.Exception, "SchemaFormatter", "Template is not valid: {0}", e.Message);
                 result = false;
             });
 
-            return (result);
+            return new ValidationResult { IsValid = result, Exceptions = exceptions };
         }
 
         Stream ITemplateFormatter.ToFormattedTemplate(Model.ProvisioningTemplate template)
@@ -1078,15 +1094,19 @@ namespace OfficeDevPnP.Core.Framework.Provisioning.Providers.Xml
             sourceStream.Position = 0;
 
             // Check the provided template against the XML schema
-            if (!this.IsValid(sourceStream))
+            var validationResult = this.GetValidationResults(sourceStream);
+            if (!validationResult.IsValid)
             {
-                // TODO: Use resource file
-                throw new ApplicationException("The provided template is not valid!");
+                throw new ApplicationException("Template is not valid", new AggregateException(validationResult.Exceptions));
             }
 
             sourceStream.Position = 0;
             XDocument xml = XDocument.Load(sourceStream);
-            XNamespace pnp = XMLConstants.PROVISIONING_SCHEMA_NAMESPACE_2015_12;
+            XNamespace pnp =
+#pragma warning disable 0618
+                XMLConstants.PROVISIONING_SCHEMA_NAMESPACE_2015_12
+#pragma warning disable 0618
+                ;
 
             // Prepare a variable to hold the single source formatted template
             V201512.ProvisioningTemplate source = null;

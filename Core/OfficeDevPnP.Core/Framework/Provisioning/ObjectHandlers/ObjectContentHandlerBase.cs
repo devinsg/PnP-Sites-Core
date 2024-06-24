@@ -36,60 +36,69 @@ namespace OfficeDevPnP.Core.Framework.Provisioning.ObjectHandlers
                 var fieldValuesAsText = listItem.EnsureProperty(li => li.FieldValuesAsText).FieldValues;
 
                 var fieldstoExclude = new[] {
-                "ID",
-                "GUID",
-                "Author",
-                "Editor",
-                "FileLeafRef",
-                "FileRef",
-                "File_x0020_Type",
-                "Modified_x0020_By",
-                "Created_x0020_By",
-                "Created",
-                "Modified",
-                "FileDirRef",
-                "Last_x0020_Modified",
-                "Created_x0020_Date",
-                "File_x0020_Size",
-                "FSObjType",
-                "IsCheckedoutToLocal",
-                "ScopeId",
-                "UniqueId",
-                "VirusStatus",
-                "_Level",
-                "_IsCurrentVersion",
-                "ItemChildCount",
-                "FolderChildCount",
-                "SMLastModifiedDate",
-                "owshiddenversion",
-                "_UIVersion",
-                "_UIVersionString",
-                "Order",
-                "WorkflowVersion",
-                "DocConcurrencyNumber",
-                "ParentUniqueId",
-                "CheckedOutUserId",
-                "SyncClientId",
-                "CheckedOutTitle",
-                "SMTotalSize",
-                "SMTotalFileStreamSize",
-                "SMTotalFileCount",
-                "ParentVersionString",
-                "ParentLeafName",
-                "SortBehavior",
-                "StreamHash",
-                "TaxCatchAll",
-                "TaxCatchAllLabel",
-                "_ModerationStatus",
-                //"HtmlDesignAssociated",
-                //"HtmlDesignStatusAndPreview",
-                "MetaInfo",
-                "CheckoutUser",
-                "NoExecute",
-                "_HasCopyDestinations",
-                "ContentVersion",
-                "UIVersion",
-            };
+                    "ID",
+                    "GUID",
+                    "Author",
+                    "Editor",
+                    "FileLeafRef",
+                    "FileRef",
+                    "File_x0020_Type",
+                    "Modified_x0020_By",
+                    "Created_x0020_By",
+                    "Created",
+                    "Modified",
+                    "FileDirRef",
+                    "Last_x0020_Modified",
+                    "Created_x0020_Date",
+                    "File_x0020_Size",
+                    "FSObjType",
+                    "IsCheckedoutToLocal",
+                    "ScopeId",
+                    "UniqueId",
+                    "VirusStatus",
+                    "_Level",
+                    "_IsCurrentVersion",
+                    "ItemChildCount",
+                    "FolderChildCount",
+                    "SMLastModifiedDate",
+                    "owshiddenversion",
+                    "_UIVersion",
+                    "_UIVersionString",
+                    "Order",
+                    "WorkflowVersion",
+                    "DocConcurrencyNumber",
+                    "ParentUniqueId",
+                    "CheckedOutUserId",
+                    "SyncClientId",
+                    "CheckedOutTitle",
+                    "SMTotalSize",
+                    "SMTotalFileStreamSize",
+                    "SMTotalFileCount",
+                    "ParentVersionString",
+                    "ParentLeafName",
+                    "SortBehavior",
+                    "StreamHash",
+                    "TaxCatchAll",
+                    "TaxCatchAllLabel",
+                    "_ModerationStatus",
+                    //"HtmlDesignAssociated",
+                    //"HtmlDesignStatusAndPreview",
+                    "MetaInfo",
+                    "CheckoutUser",
+                    "NoExecute",
+                    "_HasCopyDestinations",
+                    "ContentVersion",
+                    "UIVersion",
+                    "AccessPolicy",
+                    "BSN",
+                    "_ListSchemaVersion",
+                    "_Dirty",
+                    "_Parsable",
+                    "_StubFile",
+                    "_VirusStatus",
+                    "_VirusVendorID",
+                    "_CheckinComment"
+                };
 
                 foreach (var fieldValue in fieldValues.Where(f => !fieldstoExclude.Contains(f.Key)))
                 {
@@ -168,9 +177,8 @@ namespace OfficeDevPnP.Core.Framework.Provisioning.ObjectHandlers
         {
             if (creationInfo.FileConnector != null)
             {
+                var fileConnector = creationInfo.FileConnector;
                 SharePointConnector connector = new SharePointConnector(web.Context, web.Url, "dummy");
-
-                
                 Uri u = new Uri(web.Url);
 
                 if (u.PathAndQuery != "/")
@@ -184,6 +192,11 @@ namespace OfficeDevPnP.Core.Framework.Provisioning.ObjectHandlers
                 String container = folderPath.Trim('/').Replace("%20", " ").Replace("/", "\\");
                 String persistenceFileName = (decodeFileName ? HttpUtility.UrlDecode(fileName) : fileName).Replace("%20", " ");
 
+                if (fileConnector.Parameters.ContainsKey(FileConnectorBase.CONTAINER))
+                {
+                    container = string.Concat(fileConnector.GetContainer(), container);
+                }
+
                 using (Stream s = connector.GetFileStream(fileName, folderPath))
                 {
                     if (s != null)
@@ -195,8 +208,8 @@ namespace OfficeDevPnP.Core.Framework.Provisioning.ObjectHandlers
             }
             else
             {
-                WriteWarning("No connector present to persist homepage.", ProvisioningMessageType.Error);
-                scope.LogError("No connector present to persist homepage");
+                WriteMessage($"No connector present to persist {fileName}.", ProvisioningMessageType.Error);
+                scope.LogError($"No connector present to persist {fileName}.");
             }
         }
     }

@@ -5,13 +5,19 @@ using System.Net;
 using System.Reflection;
 using System.Security;
 using System.Threading;
+#if !NETSTANDARD2_0
 using System.Web.Script.Serialization;
+#endif
 using Microsoft.Online.SharePoint.TenantAdministration;
 using Microsoft.SharePoint.Client;
 using OfficeDevPnP.Core.Framework.TimerJobs.Enums;
 using OfficeDevPnP.Core.Framework.TimerJobs.Utilities;
 using OfficeDevPnP.Core.Diagnostics;
 using System.Security.Cryptography.X509Certificates;
+using System.Globalization;
+#if NETSTANDARD2_0
+using Newtonsoft.Json;
+#endif
 
 namespace OfficeDevPnP.Core.Framework.TimerJobs
 {
@@ -47,24 +53,29 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
         private string realm;
         private string clientId;
         private string clientSecret;
+        private string accessToken;
+        private AzureEnvironment azureEnvironment;
+        private bool highTrust;
         private string azureTenant;
         private X509Certificate2 certificate;
         private string certificatePath;
+        private string certificateIssuerId;
         private SecureString certificatePassword;
-
 
         private int sharePointVersion = 16;
         private string enumerationUser;
         private SecureString enumerationPassword;
         private string enumerationDomain;
         private string tenantAdminSite;
+        private bool excludeOD4B = false;
+
         // Site scope variables
         private List<string> requestedSites;
         private List<string> sitesToProcess;
         private bool expandSubSites = false;
         // Threading
-        private static int numberOfThreadsNotYetCompleted;
-        private static ManualResetEvent doneEvent;
+        private int numberOfThreadsNotYetCompleted;
+        private ManualResetEvent doneEvent;
         private bool useThreading = true;
         private int maximumThreads = 5;
         #endregion
@@ -86,6 +97,11 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
         {
         }
 
+        /// <summary>
+        /// Simpliefied constructor for timer job, sets given version to timer job
+        /// </summary>
+        /// <param name="name">Name of the timer job</param>
+        /// <param name="version">Version of the timer job</param>
         public TimerJob(string name, string version)
             : this(name, version, "")
         {
@@ -96,7 +112,7 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
         /// </summary>
         /// <param name="name">Name of the timer job</param>
         /// <param name="version">Version of the timer job</param>
-        /// <param name="configurationData"></param>
+        /// <param name="configurationData">Timer job configuration data</param>
         public TimerJob(string name, string version, string configurationData)
         {
             this.name = name;
@@ -107,6 +123,7 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
 
             // Default authentication model will be Office365
             this.authenticationType = AuthenticationType.Office365;
+            this.azureEnvironment = AzureEnvironment.Production;
             this.authenticationManagers = new ConcurrentDictionary<string, AuthenticationManager>();
 
             Log.Info(Constants.LOGGING_SOURCE, CoreResources.TimerJob_Constructor, this.name, this.version);
@@ -244,10 +261,12 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
                 this.requestedSites = UpdateAddedSites(requestedSites);
                 Log.Info(Constants.LOGGING_SOURCE, CoreResources.TimerJob_Run_AfterUpdateAddedSites, requestedSites.Count);
 
+#if !NETSTANDARD2_0
                 if (String.IsNullOrEmpty(this.realm) && this.authenticationType == AuthenticationType.AppOnly && requestedSites.Count > 0)
                 {
                     this.realm = Core.Utilities.TokenHelper.GetRealmFromTargetUrl(new Uri(GetTopLevelSite(requestedSites[0].Replace("*", ""))));
                 }
+#endif
 
                 // Prepare the list of sites to process. This will resolve the wildcard site Url's to a list of actual Url's
                 Log.Info(Constants.LOGGING_SOURCE, CoreResources.TimerJob_Run_BeforeResolveAddedSites, requestedSites.Count);
@@ -318,7 +337,10 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
                 // Call our work routine per site in the passed batch of sites
                 foreach (string site in sites)
                 {
-                    DoWork(site);
+                    if (!string.IsNullOrEmpty(site))
+                    {
+                        DoWork(site);
+                    }
                 }
             }
             finally
@@ -343,37 +365,49 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
             // Get the root site of the passed site
             string rootSite = GetRootSite(site);
 
-            // Instantiate the needed ClientContext objects
-            ClientContext ccWeb = CreateClientContext(site);
+            ClientContext ccWeb = null;
             ClientContext ccSite = null;
+            ClientContext ccTenant = null;
 
-            if (rootSite.Equals(site, StringComparison.InvariantCultureIgnoreCase))
+            // Instantiate the needed ClientContext objects
+            try
             {
-                ccSite = ccWeb;
-            }
-            else
-            {
-                ccSite = CreateClientContext(rootSite);
-            }
+                ccWeb = CreateClientContext(site);
+
+
+                if (rootSite.Equals(site, StringComparison.InvariantCultureIgnoreCase))
+                {
+                    ccSite = ccWeb;
+                }
+                else
+                {
+                    ccSite = CreateClientContext(rootSite);
+                }
 
 #if !ONPREMISES
-            // Instantiate ClientContext against tenant admin site, this is needed to operate using the Tenant API
-            string tenantAdminSiteUrl = tenantAdminSite;
-            if (string.IsNullOrEmpty(tenantAdminSiteUrl))
-            {
-                tenantAdminSiteUrl = GetTenantAdminSite(site);
-            }
-            ClientContext ccTenant = CreateClientContext(tenantAdminSiteUrl);
+                // Instantiate ClientContext against tenant admin site, this is needed to operate using the Tenant API
+                string tenantAdminSiteUrl = tenantAdminSite;
+                if (string.IsNullOrEmpty(tenantAdminSiteUrl))
+                {
+                    tenantAdminSiteUrl = GetTenantAdminSite(site);
+                }
+                ccTenant = CreateClientContext(tenantAdminSiteUrl);
 #else
-            // No easy way to detect tenant admin site in on-premises, so uses has to specify it
-            ClientContext ccTenant = null;
-            if (!String.IsNullOrEmpty(tenantAdminSite))
-            {
-                ccTenant = CreateClientContext(tenantAdminSite);
-            }
+                // No easy way to detect tenant admin site in on-premises, so users have to specify it            
+                if (!String.IsNullOrEmpty(tenantAdminSite))
+                {
+                    ccTenant = CreateClientContext(tenantAdminSite);
+                }
 #endif
+            }
+            catch (Exception ex)
+            {
+                // Sometimes getting a valid clientcontext fails due to auth reasons (e.g. Azure ACS random outages)...don't break the provisioning job 
+                // but provide null values in the timer job event so that each implementation can decide how to handle this
+                Log.Error(Constants.LOGGING_SOURCE, CoreResources.TimerJob_DoWork_NoClientContext, ex.ToDetailedString());
+            }
 
-            // Prepare the timerjob callback event arguments
+            // Prepare the TimerJob callback event arguments
             TimerJobRunEventArgs e = new TimerJobRunEventArgs(site, ccSite, ccWeb, ccTenant, null, null, "", new Dictionary<string, string>(), this.ConfigurationData);
 
             // Trigger the event to fire, but only when there's an event handler connected
@@ -402,7 +436,9 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
                 if (timerJobRunHandlerThreadCopy != null)
                 {
                     PropertyValues props = null;
+#if !NETSTANDARD2_0
                     JavaScriptSerializer s = null;
+#endif
 
                     // if state is managed then the state value is stored in a property named "<timerjobname>_Properties"
                     string propertyKey = $"{NormalizedTimerJobName(this.name)}_Properties";
@@ -414,8 +450,9 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
                         e.WebClientContext.Load(props);
                         e.WebClientContext.ExecuteQueryRetry();
 
+#if !NETSTANDARD2_0
                         s = new JavaScriptSerializer();
-
+#endif
                         // we've found previously stored state, so this is not the first timer job run
                         if (props.FieldValues.ContainsKey(propertyKey))
                         {
@@ -427,7 +464,11 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
                                 Log.Info(Constants.LOGGING_SOURCE, CoreResources.TimerJob_OnTimerJobRun_PropertiesRead, propertyKey, e.Url);
 
                                 // Deserialize the json string into a TimerJobRun class instance
+#if !NETSTANDARD2_0
                                 TimerJobRun timerJobRunProperties = s.Deserialize<TimerJobRun>(timerJobProps);
+#else
+                                TimerJobRun timerJobRunProperties = JsonConvert.DeserializeObject<TimerJobRun>(timerJobProps);
+#endif
 
                                 // Pass the state information as part of the event arguments
                                 if (timerJobRunProperties != null)
@@ -467,8 +508,11 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
                         Log.Info(Constants.LOGGING_SOURCE, CoreResources.TimerJob_OnTimerJobRun_PrevRunVersionSet, timerJobRunProperties.PreviousRunVersion, e.Url);
 
                         // Serialize to json string
+#if !NETSTANDARD2_0
                         string timerJobProps = s.Serialize(timerJobRunProperties);
-
+#else
+                        string timerJobProps = JsonConvert.SerializeObject(timerJobRunProperties);
+#endif
                         props = e.WebClientContext.Web.AllProperties;
 
                         // Get the value, if the web properties are already loaded
@@ -601,6 +645,21 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
         }
 
         /// <summary>
+        /// Azure environment that will be used
+        /// </summary>
+        public AzureEnvironment AzureEnvironment
+        {
+            get
+            {
+                return this.azureEnvironment;
+            }
+            set
+            {
+                this.azureEnvironment = value;
+            }
+        }
+
+        /// <summary>
         /// Option to specify the tenant admin site. For MT this typically is not needed since we can detect the tenant admin site, but for on premises and DvNext this is needed
         /// </summary>
         public string TenantAdminSite
@@ -617,10 +676,10 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
         }
 
         /// <summary>
-        /// Prepares the timerjob to operate against Office 365 with user and password credentials. Sets AuthenticationType 
+        /// Prepares the TimerJob to operate against Office 365 with user and password credentials. Sets AuthenticationType 
         /// to AuthenticationType.Office365
         /// </summary>
-        /// <param name="userUPN"></param>
+        /// <param name="userUPN">user name</param>
         /// <param name="password">Password of the user that will be used to operate the timer job work</param>
         public void UseOffice365Authentication(string userUPN, string password)
         {
@@ -633,10 +692,10 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
         }
 
         /// <summary>
-        /// Prepares the timerjob to operate against Office 365 with user and password credentials. Sets AuthenticationType 
+        /// Prepares the TimerJob to operate against Office 365 with user and password credentials. Sets AuthenticationType 
         /// to AuthenticationType.Office365
         /// </summary>
-        /// <param name="userUPN"></param>
+        /// <param name="userUPN">user name</param>
         /// <param name="password">Password of the user that will be used to operate the timer job work</param>
         public void UseOffice365Authentication(string userUPN, SecureString password)
         {
@@ -658,7 +717,7 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
         }
 
         /// <summary>
-        /// Prepares the timerjob to operate against Office 365 with user and password credentials which are retrieved via 
+        /// Prepares the TimerJob to operate against Office 365 with user and password credentials which are retrieved via 
         /// the windows Credential Manager. Also sets AuthenticationType to AuthenticationType.Office365
         /// </summary>
         /// <param name="credentialName">Name of the credential manager registration</param>
@@ -689,7 +748,7 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
         }
 
         /// <summary>
-        /// Prepares the timerjob to operate against SharePoint on-premises with user name password credentials. Sets AuthenticationType 
+        /// Prepares the TimerJob to operate against SharePoint on-premises with user name password credentials. Sets AuthenticationType 
         /// to AuthenticationType.NetworkCredentials
         /// </summary>
         /// <param name="samAccountName">samAccontName of the windows user</param>
@@ -706,7 +765,7 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
         }
 
         /// <summary>
-        /// Prepares the timerjob to operate against SharePoint on-premises with user name password credentials. Sets AuthenticationType 
+        /// Prepares the TimerJob to operate against SharePoint on-premises with user name password credentials. Sets AuthenticationType 
         /// to AuthenticationType.NetworkCredentials
         /// </summary>
         /// <param name="samAccountName">samAccontName of the windows user</param>
@@ -716,7 +775,7 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
         {
             if (String.IsNullOrEmpty(samAccountName))
             {
-                throw new ArgumentNullException("userName");
+                throw new ArgumentNullException(nameof(samAccountName));
             }
 
             if (password == null || password.Length == 0)
@@ -738,7 +797,7 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
         }
 
         /// <summary>
-        /// Prepares the timerjob to operate against SharePoint on-premises with user name password  credentials which are retrieved via 
+        /// Prepares the TimerJob to operate against SharePoint on-premises with user name password  credentials which are retrieved via 
         /// the windows Credential Manager. Sets AuthenticationType to AuthenticationType.NetworkCredentials
         /// </summary>
         /// <param name="credentialName">Name of the credential manager registration</param>
@@ -766,7 +825,7 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
             if (cred != null)
             {
                 securePassword = cred.SecurePassword;
-            } 
+            }
 
             if (cred != null && !String.IsNullOrEmpty(cred.UserName) && securePassword != null && securePassword.Length != 0 && !String.IsNullOrEmpty(cred.Domain))
             {
@@ -780,7 +839,7 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
         }
 
         /// <summary>
-        /// Prepares the timerjob to operate against SharePoint on-premises with app-only credentials. Sets AuthenticationType 
+        /// Prepares the TimerJob to operate against SharePoint on-premises with app-only credentials. Sets AuthenticationType 
         /// to AuthenticationType.AppOnly
         /// </summary>
         /// <param name="clientId">Client ID of the app</param>
@@ -804,9 +863,66 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
             Log.Info(Constants.LOGGING_SOURCE, CoreResources.TimerJob_Authentication_AppOnly, clientId);
         }
 
+        /// <summary>
+        /// Prepares the timerjob to operate against SharePoint on-premises with app-only client Id and certificate in High Trust mode. 
+        /// Sets AuthenticationType to AuthenticationType.AppOnly
+        /// </summary>
+        /// <param name="clientId">Client ID of the app</param>
+        /// <param name="certificatePath">Path of the Certificate file</param>
+        /// <param name="certificatePassword">Password of the Certificate</param>
+        /// <param name="certificateIssuerId">The Issuer ID of the certificate</param>
+        public void UseAppOnlyAuthentication(string clientId, string certificatePath, SecureString certificatePassword, string certificateIssuerId)
+        {
+            if (String.IsNullOrEmpty(clientId))
+            {
+                throw new ArgumentNullException(nameof(clientId));
+            }
+
+            if (String.IsNullOrEmpty(certificatePath))
+            {
+                throw new ArgumentNullException(nameof(certificatePath));
+            }
+
+            if (certificatePassword == null)
+            {
+                throw new ArgumentNullException(nameof(certificatePassword));
+            }
+
+            if (String.IsNullOrEmpty(certificateIssuerId))
+            {
+                throw new ArgumentNullException(nameof(certificateIssuerId));
+            }
+
+            this.authenticationType = AuthenticationType.AppOnly;
+            this.clientId = clientId;
+            this.certificatePath = certificatePath;
+            this.certificatePassword = certificatePassword;
+            this.certificateIssuerId = certificateIssuerId;
+
+            Log.Info(Constants.LOGGING_SOURCE, CoreResources.TimerJob_Authentication_AppOnly, clientId);
+        }
+
+        /// <summary>
+        /// Prepares the timerjob to operate against SharePoint on-premises with app-only client Id and certificate in High Trust mode. 
+        /// Sets AuthenticationType to AuthenticationType.AppOnly
+        /// </summary>
+        /// <param name="clientId">Client ID of the app</param>
+        /// <param name="certificatePath">Path of the Certificate file</param>
+        /// <param name="certificatePassword">Password of the Certificate</param>
+        /// <param name="certificateIssuerId">The Issuer ID of the certificate</param>
+        public void UseAppOnlyAuthentication(string clientId, string certificatePath, string certificatePassword, string certificateIssuerId)
+        {
+            if (string.IsNullOrEmpty(certificatePassword))
+            {
+                throw new ArgumentNullException(nameof(certificatePassword));
+            }
+            UseAppOnlyAuthentication(clientId, certificatePath, Core.Utilities.EncryptionUtility.ToSecureString(certificatePassword), certificateIssuerId);
+        }
+
+
 #if !ONPREMISES
         /// <summary>
-        /// Prepares the timerjob to operate against SharePoint Only with Azure AD app-only credentials. Sets AuthenticationType 
+        /// Prepares the TimerJob to operate against SharePoint Only with Azure AD app-only credentials. Sets AuthenticationType 
         /// to AuthenticationType.AzureADAppOnly
         /// </summary>
         /// <param name="clientId">Client ID of the app</param>
@@ -823,7 +939,7 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
         }
 
         /// <summary>
-        /// Prepares the timerjob to operate against SharePoint Only with Azure AD app-only credentials. Sets AuthenticationType 
+        /// Prepares the TimerJob to operate against SharePoint Only with Azure AD app-only credentials. Sets AuthenticationType 
         /// to AuthenticationType.AzureADAppOnly
         /// </summary>
         /// <param name="clientId">Client ID of the app</param>
@@ -861,7 +977,7 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
         }
 
         /// <summary>
-        /// Prepares the timerjob to operate against SharePoint Only with Azure AD app-only credentials. Sets AuthenticationType 
+        /// Prepares the TimerJob to operate against SharePoint Only with Azure AD app-only credentials. Sets AuthenticationType 
         /// to AuthenticationType.AzureADAppOnly
         /// </summary>
         /// <param name="clientId">Client ID of the app</param>
@@ -891,13 +1007,32 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
 
             Log.Info(Constants.LOGGING_SOURCE, CoreResources.TimerJob_Authentication_AzureADAppOnly, clientId, certificate.SubjectName);
         }
+
+        /// <summary>
+        ///  Prepares the TimerJob to operate against SharePoint Only with a provided access token. Sets AuthenticationType 
+        /// to AuthenticationType.AccessToken
+        /// </summary>
+        /// <param name="accessToken">Provided access token</param>
+        public void UseAccessTokenAuthentication(string accessToken)
+        {
+            if (String.IsNullOrEmpty(accessToken))
+            {
+                throw new ArgumentNullException(nameof(accessToken));
+            }
+
+            this.authenticationType = AuthenticationType.AccessToken;
+            this.accessToken = accessToken;
+
+            Log.Info(Constants.LOGGING_SOURCE, CoreResources.TimerJob_Authentication_AccessToken);
+        }
+
 #endif
 
         /// <summary>
         /// Takes over the settings from the passed timer job. Is useful when you run multiple jobs in a row or chain 
         /// job execution. Settings that are taken over are all the authentication, enumeration settings and SharePointVersion
         /// </summary>
-        /// <param name="job"></param>
+        /// <param name="job">TimerJob</param>
         public void Clone(TimerJob job)
         {
             this.username = job.username;
@@ -937,11 +1072,28 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
                 return am;
             }
         }
-#endregion
+        #endregion
 
         #region Site scope methods and attributes
+
         /// <summary>
-        /// Does the timerjob need to fire as well for every sub site in the site?
+        /// Does the TimerJob also need to enumerate OD4B site collections
+        /// </summary>
+        public bool ExcludeOD4B
+        {
+            get
+            {
+                return this.excludeOD4B;
+            }
+            set
+            {
+                this.excludeOD4B = value;
+            }
+        }
+
+
+        /// <summary>
+        /// Does the TimerJob need to fire as well for every sub site in the site?
         /// </summary>
         public bool ExpandSubSites
         {
@@ -1025,7 +1177,7 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
         /// <summary>
         /// Provides the timer job with the enumeration credentials. For Office 365 username and password is sufficient
         /// </summary>
-        /// <param name="userUPN"></param>
+        /// <param name="userUPN">user name</param>
         /// <param name="password">Password of the enumeration user</param>
         public void SetEnumerationCredentials(string userUPN, string password)
         {
@@ -1040,7 +1192,7 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
         /// <summary>
         /// Provides the timer job with the enumeration credentials. For Office 365 username and password is sufficient
         /// </summary>
-        /// <param name="userUPN"></param>
+        /// <param name="userUPN">user name</param>
         /// <param name="password">Password of the enumeration user</param>
         public void SetEnumerationCredentials(string userUPN, SecureString password)
         {
@@ -1164,14 +1316,11 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
                 throw new ArgumentNullException(nameof(site));
             }
 
-            site = site.ToLower();
+            site = site.ToLower(CultureInfo.InvariantCulture);
 
-            if (!site.Contains("*"))
+            if (!site.Contains("*") && !IsValidUrl(site))
             {
-                if (!IsValidUrl(site))
-                {
-                    throw new ArgumentException(string.Format(CoreResources.TimerJob_AddSite_InvalidUrl, site), nameof(site));
-                }
+                throw new ArgumentException(string.Format(CoreResources.TimerJob_AddSite_InvalidUrl, site), nameof(site));
             }
 
             if (!requestedSites.Contains(site))
@@ -1237,7 +1386,7 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
             {
                 List<string> resolvedSitesAndSubSites = new List<string>();
 
-                // Prefered option is to use threading to increase the list resolving speed
+                // Preferred option is to use threading to increase the list resolving speed
                 if (useThreading)
                 {
                     // Split the sites to resolve in batches
@@ -1387,7 +1536,22 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
         /// </summary>
         /// <param name="site">Site Url to create a ClientContext for</param>
         /// <returns>The created ClientContext object. Returns null if no ClientContext was created</returns>
-        private ClientContext CreateClientContext(string site)
+//#if NETSTANDARD2_0
+//        protected ClientContext CreateClientContext(string site)
+//        {
+//            if (AuthenticationType == AuthenticationType.Office365)
+//            {
+//                return GetAuthenticationManager(site).GetSharePointOnlineAuthenticatedContextTenant(site, username, password);
+//            } else if(AuthenticationType == AuthenticationType.NetworkCredentials)
+//            {
+//                return GetAuthenticationManager(site).GetNetworkCredentialAuthenticatedContext(site, username, password, domain);
+//            } else
+//            {
+//                return null;
+//            }
+//        }
+//#else
+        protected ClientContext CreateClientContext(string site)
         {
             if (SharePointVersion == 15)
             {
@@ -1397,7 +1561,25 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
                 }
                 else if (AuthenticationType == AuthenticationType.AppOnly)
                 {
-                    return GetAuthenticationManager(site).GetAppOnlyAuthenticatedContext(site, this.realm, this.clientId, this.clientSecret);
+#if !NETSTANDARD2_0
+                    if (this.highTrust)
+                    {
+                        if (this.certificate != null)
+                        {
+                            return GetAuthenticationManager(site).GetHighTrustCertificateAppOnlyAuthenticatedContext(site, this.clientId, this.certificate, this.certificateIssuerId);
+                        }
+                        else
+                        {
+                            return GetAuthenticationManager(site).GetHighTrustCertificateAppOnlyAuthenticatedContext(site, this.clientId, this.certificatePath, this.certificatePassword, this.certificateIssuerId);
+                        }
+                    }
+                    else
+                    {
+#endif
+                        return GetAuthenticationManager(site).GetAppOnlyAuthenticatedContext(site, this.realm, this.clientId, this.clientSecret);
+#if !NETSTANDARD2_0
+                    }
+#endif
                 }
             }
             else
@@ -1405,7 +1587,8 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
 #if !ONPREMISES
                 if (AuthenticationType == AuthenticationType.Office365)
                 {
-                    return GetAuthenticationManager(site).GetSharePointOnlineAuthenticatedContextTenant(site, username, password);
+                    //return GetAuthenticationManager(site).GetSharePointOnlineAuthenticatedContextTenant(site, username, password);
+                    return GetAuthenticationManager(site).GetAzureADCredentialsContext(site, username, password, this.azureEnvironment);
                 }
                 else if (AuthenticationType == AuthenticationType.AppOnly)
                 {
@@ -1415,12 +1598,16 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
                 {
                     if (this.certificate != null)
                     {
-                        return GetAuthenticationManager(site).GetAzureADAppOnlyAuthenticatedContext(site, this.clientId, this.azureTenant, this.certificate);
+                        return GetAuthenticationManager(site).GetAzureADAppOnlyAuthenticatedContext(site, this.clientId, this.azureTenant, this.certificate, this.azureEnvironment);
                     }
                     else
                     {
-                        return GetAuthenticationManager(site).GetAzureADAppOnlyAuthenticatedContext(site, this.clientId, this.azureTenant, this.certificatePath, this.certificatePassword);
+                        return GetAuthenticationManager(site).GetAzureADAppOnlyAuthenticatedContext(site, this.clientId, this.azureTenant, this.certificatePath, this.certificatePassword, this.azureEnvironment);
                     }
+                }
+                else if (AuthenticationType == AuthenticationType.AccessToken)
+                {
+                    return GetAuthenticationManager(site).GetAzureADAccessTokenAuthenticatedContext(site, this.accessToken);
                 }
 #else
                 if (AuthenticationType == AuthenticationType.NetworkCredentials)
@@ -1429,13 +1616,28 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
                 }
                 else if (AuthenticationType == AuthenticationType.AppOnly)
                 {
-                    return GetAuthenticationManager(site).GetAppOnlyAuthenticatedContext(site, this.realm, this.clientId, this.clientSecret);
+                    if (this.highTrust)
+                    {
+                        if (this.certificate != null)
+                        {
+                            return GetAuthenticationManager(site).GetHighTrustCertificateAppOnlyAuthenticatedContext(site, this.clientId, this.certificate, this.certificateIssuerId);
+                        }
+                        else
+                        {
+                            return GetAuthenticationManager(site).GetHighTrustCertificateAppOnlyAuthenticatedContext(site, this.clientId, this.certificatePath, this.certificatePassword, this.certificateIssuerId);
+                        }
+                    }
+                    else
+                    {
+                        return GetAuthenticationManager(site).GetAppOnlyAuthenticatedContext(site, this.realm, this.clientId, this.clientSecret);
+                    }               
                 }
 #endif
             }
 
             return null;
         }
+//#endif
 
         /// <summary>
         /// Resolves a wildcard site Url into a list of actual site Url's
@@ -1460,12 +1662,26 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
                     // with the proper tenant scoped permissions one can do search with app-only in SPO
                     ccEnumerate = GetAuthenticationManager(site).GetAppOnlyAuthenticatedContext(GetTenantAdminSite(site), this.realm, this.clientId, this.clientSecret);
                 }
+                else if (AuthenticationType == AuthenticationType.AzureADAppOnly)
+                {
+                    if (this.certificate != null)
+                    {
+                        ccEnumerate = GetAuthenticationManager(site).GetAzureADAppOnlyAuthenticatedContext(GetTenantAdminSite(site), this.clientId, this.azureTenant, this.certificate, this.azureEnvironment);
+                    }
+                    else
+                    {
+                        ccEnumerate = GetAuthenticationManager(site).GetAzureADAppOnlyAuthenticatedContext(GetTenantAdminSite(site), this.clientId, this.azureTenant, this.certificatePath, this.certificatePassword, this.azureEnvironment);
+                    }
+                }
+#if !NETSTANDARD2_0
                 else
                 {
-                    ccEnumerate = GetAuthenticationManager(site).GetSharePointOnlineAuthenticatedContextTenant(GetTenantAdminSite(site), EnumerationUser, EnumerationPassword);
+                    //ccEnumerate = GetAuthenticationManager(site).GetSharePointOnlineAuthenticatedContextTenant(GetTenantAdminSite(site), EnumerationUser, EnumerationPassword);
+                    ccEnumerate = GetAuthenticationManager(site).GetAzureADCredentialsContext(GetTenantAdminSite(site), EnumerationUser, EnumerationPassword, this.azureEnvironment);
                 }
+#endif
                 Tenant tenant = new Tenant(ccEnumerate);
-                SiteEnumeration.Instance.ResolveSite(tenant, site, resolvedSites);
+                SiteEnumeration.Instance.ResolveSite(tenant, site, resolvedSites, this.excludeOD4B);
 #else
                 ccEnumerate = GetAuthenticationManager(site).GetNetworkCredentialAuthenticatedContext(GetTopLevelSite(site.Replace("*", "")), EnumerationUser, EnumerationPassword, EnumerationDomain);
                 SiteEnumeration.Instance.ResolveSite(ccEnumerate, site, resolvedSites);
@@ -1477,7 +1693,7 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
         /// Gets all sub sites for a given site
         /// </summary>
         /// <param name="site">Site to find all sub site for</param>
-        /// <returns>IEnumerable of strings holding the sub site urls</returns>
+        /// <returns>IEnumerable of strings holding the sub site URLs</returns>
         public IEnumerable<string> GetAllSubSites(Site site)
         {
             var siteContext = site.Context;
@@ -1490,11 +1706,12 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
                 var currentUrl = queue.Dequeue();
                 using (var webContext = siteContext.Clone(currentUrl))
                 {
-                    webContext.Load(webContext.Web, web => web.Webs);
+                    webContext.Load(webContext.Web, web => web.Webs.Include(w => w.Url, w => w.WebTemplate));
                     webContext.ExecuteQueryRetry();
                     foreach (var subWeb in webContext.Web.Webs)
                     {
-                        if (!subWeb.WebTemplate.Equals("App", StringComparison.InvariantCultureIgnoreCase))
+                        if (!subWeb.WebTemplate.Equals("App", StringComparison.InvariantCultureIgnoreCase) &&
+                            !subWeb.WebTemplate.Equals("ACCSVC", StringComparison.InvariantCultureIgnoreCase))
                         {
                             queue.Enqueue(subWeb.Url);
                         }
@@ -1503,9 +1720,9 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
                 yield return currentUrl;
             }
         }
-        #endregion
+#endregion
 
-        #region Helper methods
+#region Helper methods
         /// <summary>
         /// Verifies if the passed Url has a valid structure
         /// </summary>
@@ -1526,7 +1743,7 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
         /// <summary>
         /// Gets the current SharePoint version based on the loaded assembly
         /// </summary>
-        /// <returns></returns>
+        /// <returns>Returns SharePoint version</returns>
         private int GetSharePointVersion()
         {
             Assembly asm = Assembly.GetAssembly(typeof(Site));
@@ -1547,15 +1764,17 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
             {
                 Uri u = new Uri(GetTopLevelSite(site.Replace("*", "")));
                 string tenantName = u.DnsSafeHost.Split(new string[] { "." }, StringSplitOptions.RemoveEmptyEntries)[0];
-                return $"https://{tenantName}-admin.sharepoint.com";
+                var parts = u.DnsSafeHost.Split(new string[] { "." }, StringSplitOptions.RemoveEmptyEntries);
+                string domainExtension = parts[parts.Length - 1];
+                return $"https://{tenantName}-admin.sharepoint.{domainExtension}";
             }
         }
 
         /// <summary>
-        /// Gets the top level site for the given url
+        /// Gets the top level site for the given URL
         /// </summary>
-        /// <param name="site"></param>
-        /// <returns></returns>
+        /// <param name="site">A SharePoint site URL</param>
+        /// <returns>Returns top levl string given URL string</returns>
         private string GetTopLevelSite(string site)
         {
             Uri uri = new Uri(site.TrimEnd(new[] { '/' }));
@@ -1575,7 +1794,7 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
             if (String.IsNullOrEmpty(uri.AbsolutePath) || uri.AbsolutePath.Equals("/", StringComparison.InvariantCultureIgnoreCase))
             {
                 // Site must be root site, no doubts possible
-                return $"{uri.Scheme}://{uri.DnsSafeHost}";
+                return string.Format("{0}://{1}", uri.Scheme, uri.DnsSafeHost);
             }
 
             string[] siteParts = uri.AbsolutePath.Split(new string[] { "/" }, StringSplitOptions.RemoveEmptyEntries);
@@ -1587,18 +1806,28 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
             {
                 if (siteParts.Length == 1)
                 {
-                    return $"{uri.Scheme}://{uri.DnsSafeHost}";
+                    // e.g. https://bertonline.sharepoint.com/search is a special case
+                    if (siteParts[0].Equals("search", StringComparison.InvariantCultureIgnoreCase))
+                    {
+                        return string.Format("{0}://{1}/{2}", uri.Scheme, uri.DnsSafeHost, siteParts[0]);
+                    }
+                    else
+                    {
+                        return string.Format("{0}://{1}", uri.Scheme, uri.DnsSafeHost);
+                    }
                 }
                 else
                 {
                     if (siteParts[0].Equals("sites", StringComparison.InvariantCultureIgnoreCase) ||
-                        siteParts[0].Equals("teams", StringComparison.InvariantCultureIgnoreCase))
+                        siteParts[0].Equals("teams", StringComparison.InvariantCultureIgnoreCase) ||
+                        siteParts[0].Equals("personal", StringComparison.InvariantCultureIgnoreCase) ||
+                        siteParts[0].Equals("portals", StringComparison.InvariantCultureIgnoreCase))
                     {
-                        return $"{uri.Scheme}://{uri.DnsSafeHost}/{siteParts[0]}/{siteParts[1]}";
+                        return string.Format("{0}://{1}/{2}/{3}", uri.Scheme, uri.DnsSafeHost, siteParts[0], siteParts[1]);
                     }
                     else
                     {
-                        return $"{uri.Scheme}://{uri.DnsSafeHost}";
+                        return string.Format("{0}://{1}", uri.Scheme, uri.DnsSafeHost);
                     }
                 }
             }
@@ -1607,18 +1836,19 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
                 // e.g. https://bertonline.sharepoint.com/sub1/sub11
                 // e.g. https://bertonline.sharepoint.com/sites/dev
                 if (siteParts[0].Equals("sites", StringComparison.InvariantCultureIgnoreCase) ||
-                    siteParts[0].Equals("teams", StringComparison.InvariantCultureIgnoreCase))
+                    siteParts[0].Equals("teams", StringComparison.InvariantCultureIgnoreCase) ||
+                    siteParts[0].Equals("personal", StringComparison.InvariantCultureIgnoreCase) ||
+                    siteParts[0].Equals("portals", StringComparison.InvariantCultureIgnoreCase))
                 {
                     // sites and teams are default managed paths, so assume this is a root site
                     return site;
                 }
                 else
                 {
-                    return $"{uri.Scheme}://{uri.DnsSafeHost}";
+                    return string.Format("{0}://{1}", uri.Scheme, uri.DnsSafeHost);
                 }
             }
         }
-
         /// <summary>
         /// Normalizes the timer job name
         /// </summary>
@@ -1676,6 +1906,6 @@ namespace OfficeDevPnP.Core.Framework.TimerJobs
                 return false;
             }
         }
-        #endregion
+#endregion
     }
 }

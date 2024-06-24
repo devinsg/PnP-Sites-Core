@@ -16,6 +16,8 @@ namespace OfficeDevPnP.Core.Framework.Provisioning.ObjectHandlers
             get { return "Audit Settings"; }
         }
 
+        public override string InternalName => "AuditSettings";
+
         public override ProvisioningTemplate ExtractObjects(Web web, ProvisioningTemplate template, ProvisioningTemplateCreationInformation creationInfo)
         {
             using (var scope = new PnPMonitoredScope(this.Name))
@@ -49,7 +51,18 @@ namespace OfficeDevPnP.Core.Framework.Provisioning.ObjectHandlers
 
                 if (include)
                 {
-                    template.AuditSettings = auditSettings;
+                    // If a base template is specified then use that one to "cleanup" the generated template model
+                    if (creationInfo.BaseTemplate != null)
+                    {
+                        if (!auditSettings.Equals(creationInfo.BaseTemplate.AuditSettings))
+                        {
+                            template.AuditSettings = auditSettings;
+                        }
+                    }                    
+                    else
+                    {
+                        template.AuditSettings = auditSettings;
+                    }
                 }
             }
             return template;
@@ -111,7 +124,7 @@ namespace OfficeDevPnP.Core.Framework.Provisioning.ObjectHandlers
             return !web.IsSubSite();
         }
 
-        public override bool WillProvision(Web web, ProvisioningTemplate template)
+        public override bool WillProvision(Web web, ProvisioningTemplate template, ProvisioningTemplateApplyingInformation applyingInformation)
         {
             return !web.IsSubSite() && template.AuditSettings != null;
         }

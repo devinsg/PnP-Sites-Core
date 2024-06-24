@@ -30,6 +30,8 @@ namespace OfficeDevPnP.Core.Framework.Provisioning.ObjectHandlers
             get { return "Publishing"; }
         }
 
+        public override string InternalName => "Publishing";
+
         public override ProvisioningTemplate ExtractObjects(Web web, ProvisioningTemplate template, ProvisioningTemplateCreationInformation creationInfo)
         {
             using (var scope = new PnPMonitoredScope(this.Name))
@@ -378,7 +380,7 @@ namespace OfficeDevPnP.Core.Framework.Provisioning.ObjectHandlers
             return web.IsFeatureActive(Constants.FeatureId_Web_Publishing);
         }
 
-        public override bool WillProvision(Web web, ProvisioningTemplate template)
+        public override bool WillProvision(Web web, ProvisioningTemplate template, ProvisioningTemplateApplyingInformation applyingInformation)
         {
             return template.Publishing != null;
         }
